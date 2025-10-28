@@ -1,19 +1,24 @@
 // api/verify-token.js
 
 export default async function handler(req, res) {
-  // CORS headers
-  res.setHeader('Access-Control-Allow-Credentials', true);
+  // CORS headers - добавляем больше заголовков
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
 
+  // Handle OPTIONS request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
+  // Only allow POST
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
+    return res.status(405).json({ error: 'Method not allowed', verified: false });
   }
 
   const { token, email } = req.body;
@@ -23,12 +28,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    // HubSpot API credentials
     const HUBSPOT_API_KEY = process.env.HUBSPOT_API_KEY;
 
-    // Поиск контакта по токену
     const searchResponse = await fetch(
-      `https://api.hubapi.com/crm/v3/objects/contacts/search`,
+      'https://api.hubapi.com/crm/v3/objects/contacts/search',
       {
         method: 'POST',
         headers: {
@@ -53,18 +56,27 @@ export default async function handler(req, res) {
     );
 
     const searchData = await searchResponse.json();
+    
+    // Log для debug
+    console.log('Search results:', searchData);
 
-    // Проверяем результаты
     if (searchData.results && searchData.results.length > 0) {
       const contact = searchData.results[0];
       
-      // Проверяем что email совпадает (если передан)
+      console.log('Contact found:', contact.properties);
+      
       if (email && contact.properties.email !== email) {
         return res.json({ verified: false, error: 'Invalid token' });
       }
 
-      // Проверяем что email подтверждён
-      if (contact.properties.email_verified === 'true') {
+      // Проверяем email_verified - может быть строка "true" или boolean true
+      const isVerified = contact.properties.email_verified === 'true' || 
+                        contact.properties.email_verified === true ||
+                        contact.properties.email_verified === 'Yes';
+      
+      console.log('Email verified status:', contact.properties.email_verified, 'IsVerified:', isVerified);
+
+      if (isVerified) {
         return res.json({ 
           verified: true,
           email: contact.properties.email
@@ -73,6 +85,7 @@ export default async function handler(req, res) {
         return res.json({ verified: false, error: 'Email not verified' });
       }
     } else {
+      console.log('No contact found with token:', token);
       return res.json({ verified: false, error: 'Invalid token' });
     }
 
@@ -80,7 +93,8 @@ export default async function handler(req, res) {
     console.error('Verification error:', error);
     return res.status(500).json({ 
       verified: false, 
-      error: 'Server error' 
+      error: 'Server error',
+      details: error.message
     });
   }
 }
